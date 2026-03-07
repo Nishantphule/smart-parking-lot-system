@@ -1,0 +1,25 @@
+{
+  "name": "smart-parking-lot-system",
+  "version": "1.0.0",
+  "description": "Low-level design for a smart parking lot backend system",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "jest",
+    "test:edge": "ts-node src/tests/edgeCases.test.ts"
+  },
+  "keywords": ["parking", "system", "design-patterns"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2"
+  },
+  "dependencies": {
+    "mongoose": "^8.0.3",
+    "dotenv": "^16.3.1"
+  }
+}
