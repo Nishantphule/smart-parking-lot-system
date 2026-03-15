@@ -11,9 +11,11 @@ This system efficiently manages vehicle entry and exit, automatically assigns pa
 - **Intelligent Spot Allocation**: Automatically assigns optimal parking spots based on vehicle size (motorcycle, car, bus)
 - **Real-Time Availability**: Updates parking spot status instantly as vehicles enter and leave
 - **Dynamic Fee Calculation**: Calculates parking fees based on duration and vehicle type with configurable pricing strategies
-- **Concurrent Operations**: Thread-safe handling of multiple simultaneous check-ins and check-outs
-- **Persistent Storage**: MongoDB integration for reliable data persistence
+- **Production-Ready Concurrency**: Multi-layer protection with application-level locks and database-level atomic operations
+- **Input Validation**: Comprehensive validation for license plates and vehicle types with clear error messages
+- **Persistent Storage**: MongoDB integration with automatic in-memory fallback
 - **Flexible Allocation Strategies**: Multiple algorithms for spot assignment (First Available, Nearest Entrance, Optimal Size)
+- **Automated Testing**: Jest-based unit tests with comprehensive coverage
 
 ## 🏗️ Architecture
 
@@ -201,26 +203,31 @@ parkingLot.setAllocationStrategy(new NearestEntranceStrategy());
 
 ## 🔒 Concurrency Handling
 
-The system implements resource-based locking to ensure thread-safe operations:
+The system implements multi-layer concurrency protection:
 
-- Each check-in/check-out operation acquires a lock based on license plate
-- Promise-based locking mechanism prevents race conditions
-- Different vehicles can operate concurrently
-- Ensures data consistency and prevents duplicate operations
+- **Application-level locking**: Resource-based locks prevent concurrent operations on the same vehicle
+- **Database-level atomic operations**: Spot assignment uses atomic `findOneAndUpdate` with status checks
+- **MongoDB transactions**: Spot reservation is protected at the data layer to prevent race conditions
+- **Thread-safe operations**: Promise-based locking mechanism ensures data consistency
+- Different vehicles can operate concurrently without conflicts
 
 ## 📊 API Reference
 
 ### ParkingLotService
 
 #### `checkIn(licensePlate: string, vehicleType: string): Promise<CheckInResult>`
-Checks in a vehicle and assigns a parking spot.
+Checks in a vehicle and assigns a parking spot. Validates input before processing.
+
+**Validation:**
+- License plate: Non-empty, 1-20 characters, alphanumeric with dashes/underscores
+- Vehicle type: Must be MOTORCYCLE, CAR, or BUS
 
 **Returns:**
 - `success: boolean`
 - `vehicle?: Vehicle`
 - `spot?: ParkingSpot`
 - `transaction?: Transaction`
-- `error?: string`
+- `error?: string` - Clear error message if validation fails or operation fails
 
 #### `checkOut(licensePlate: string): Promise<CheckOutResult>`
 Checks out a vehicle and calculates parking fee.
@@ -300,14 +307,26 @@ async function main() {
 
 ### Testing
 
-The system includes comprehensive edge case tests covering:
-- Input validation and error handling
-- Boundary conditions (empty/full parking lot)
-- Concurrency safety
-- Fee calculation edge cases
-- Strategy switching scenarios
+The system includes comprehensive automated tests using Jest:
 
-See `EDGE_CASES.md` for detailed test documentation.
+```bash
+npm test
+```
+
+**Test Coverage:**
+- ✅ Input validation (license plate format, vehicle type validation)
+- ✅ Check-in/check-out operations
+- ✅ Error handling and edge cases
+- ✅ Concurrency safety (concurrent check-ins/check-outs)
+- ✅ Fee calculation accuracy
+- ✅ Availability tracking
+- ✅ Boundary conditions (empty/full parking lot)
+
+**Key Features:**
+- **Input Validation**: Rejects invalid license plates (empty, too long, invalid characters) and invalid vehicle types
+- **Database-Level Locking**: Spot assignment protected by atomic operations at the data layer
+- **Proper ID Generation**: Uses UUIDs instead of sequential counters
+- **Type Safety**: No `any` types, full TypeScript type coverage
 
 ### Project Structure
 

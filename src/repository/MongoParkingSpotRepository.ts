@@ -127,6 +127,43 @@ export class MongoParkingSpotRepository implements IParkingSpotRepository {
   }
 
   /**
+   * Atomically reserve a spot using MongoDB findOneAndUpdate with status check
+   * This provides database-level locking to prevent race conditions
+   */
+  async reserveSpotAtomically(spotId: string, vehicleId: string): Promise<ParkingSpot | null> {
+    try {
+      // Use findOneAndUpdate with status check for atomic operation
+      // This ensures the spot is still available when we reserve it
+      const doc = await ParkingSpotModel.findOneAndUpdate(
+        {
+          _id: spotId,
+          status: 'AVAILABLE' // Only update if still available
+        },
+        {
+          $set: {
+            status: 'OCCUPIED',
+            vehicleId: vehicleId,
+            occupiedAt: new Date()
+          }
+        },
+        {
+          new: true // Return updated document
+        }
+      ).exec();
+
+      if (!doc) {
+        // Spot was already taken or doesn't exist
+        return null;
+      }
+
+      return this.toDomain(doc);
+    } catch (error) {
+      // If update fails, spot is no longer available
+      return null;
+    }
+  }
+
+  /**
    * Convert MongoDB document to domain model
    */
   private toDomain(doc: IParkingSpotDocument): ParkingSpot {

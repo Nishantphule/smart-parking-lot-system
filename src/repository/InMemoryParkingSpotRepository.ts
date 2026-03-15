@@ -75,4 +75,19 @@ export class InMemoryParkingSpotRepository implements IParkingSpotRepository {
     }
     return null;
   }
+
+  /**
+   * Atomically reserve a spot (in-memory version with check)
+   */
+  async reserveSpotAtomically(spotId: string, vehicleId: string): Promise<ParkingSpot | null> {
+    const spot = this.spots.get(spotId);
+    
+    if (!spot || !spot.isAvailable()) {
+      return null; // Spot not found or already occupied
+    }
+
+    // Atomically update the spot
+    spot.occupy(vehicleId);
+    return spot;
+  }
 }

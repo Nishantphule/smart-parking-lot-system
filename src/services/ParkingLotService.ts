@@ -9,9 +9,19 @@ import { ParkingOperationAbstraction } from '../patterns/bridge/ParkingOperation
 import { FeeCalculator } from '../patterns/strategy/FeeCalculator';
 import { VehicleFactory } from '../patterns/factory/VehicleFactory';
 import { VehicleType } from '../models/Vehicle';
+import { validateLicensePlate, validateVehicleType } from '../utils/validation';
 
-// Simple UUID generator
+/**
+ * Generate a proper UUID v4 for transaction IDs
+ * Uses crypto.randomUUID if available, otherwise falls back to manual generation
+ */
 function generateUUID(): string {
+  // Use crypto.randomUUID if available (Node.js 14.17.0+)
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  
+  // Fallback for older Node.js versions
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0;
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -87,15 +97,59 @@ export class ParkingLotService {
   }
 
   /**
-   * Check-in a vehicle (thread-safe)
+   * Find and reserve a spot atomically with database-level locking
+   * This ensures spot assignment is protected at the data layer
+   */
+  private async findAndReserveSpotAtomically(vehicle: Vehicle): Promise<ParkingSpot | null> {
+    // Get available spots
+    const availableSpots = await this.spotRepo.findAvailableSpotsBySize(vehicle.getRequiredSpotSize());
+    
+    if (availableSpots.length === 0) {
+      return null;
+    }
+
+    // Use allocation strategy to select spot
+    const selectedSpot = this.parkingOperation.allocateSpot(availableSpots, vehicle);
+    
+    if (!selectedSpot) {
+      return null;
+    }
+
+    // Atomically reserve the spot using database-level operation
+    // For MongoDB: Use findOneAndUpdate with status check
+    // For In-Memory: Use the same pattern for consistency
+    const reservedSpot = await this.spotRepo.reserveSpotAtomically(selectedSpot.id, vehicle.id);
+    
+    return reservedSpot;
+  }
+
+  /**
+   * Check-in a vehicle (thread-safe with database-level locking)
    */
   async checkIn(licensePlate: string, vehicleType: string): Promise<CheckInResult> {
+    // Input validation
+    const plateValidation = validateLicensePlate(licensePlate);
+    if (!plateValidation.valid) {
+      return {
+        success: false,
+        error: plateValidation.error || 'Invalid license plate'
+      };
+    }
+
+    const typeValidation = validateVehicleType(vehicleType);
+    if (!typeValidation.valid) {
+      return {
+        success: false,
+        error: typeValidation.error || 'Invalid vehicle type'
+      };
+    }
+
     const lockKey = `checkin-${licensePlate}`;
     const releaseLock = await this.acquireLock(lockKey);
 
     try {
       // Check if vehicle is already parked
-      const existingVehicle = await this.vehicleRepo.findByLicensePlate(licensePlate);
+      const existingVehicle = await this.vehicleRepo.findByLicensePlate(licensePlate.trim());
       if (existingVehicle && existingVehicle.entryTime && !existingVehicle.exitTime) {
         const existingTransaction = await this.transactionRepo.findByVehicleId(existingVehicle.id);
         if (existingTransaction && existingTransaction.status === TransactionStatus.ACTIVE) {
@@ -112,16 +166,15 @@ export class ParkingLotService {
       if (existingVehicle && !existingVehicle.exitTime) {
         vehicle = existingVehicle;
       } else {
-        const type = VehicleType[vehicleType as keyof typeof VehicleType] || VehicleType.CAR;
-        const newVehicle = VehicleFactory.createVehicle(licensePlate, type, new Date());
+        const type = typeValidation.type!; // Already validated above
+        const newVehicle = VehicleFactory.createVehicle(licensePlate.trim(), type, new Date());
         // Save will upsert based on license plate, handling concurrent operations
         const savedResult = this.vehicleRepo.save(newVehicle);
         vehicle = savedResult instanceof Promise ? await savedResult : savedResult;
       }
 
-      // Find available spot using Bridge pattern
-      const availableSpots = await this.spotRepo.findAvailableSpotsBySize(vehicle.getRequiredSpotSize());
-      const allocatedSpot = this.parkingOperation.allocateSpot(availableSpots, vehicle);
+      // Find and reserve spot atomically using database-level locking
+      const allocatedSpot = await this.findAndReserveSpotAtomically(vehicle);
 
       if (!allocatedSpot) {
         releaseLock();
@@ -130,10 +183,6 @@ export class ParkingLotService {
           error: 'No available parking spots for this vehicle type'
         };
       }
-
-      // Occupy the spot
-      allocatedSpot.occupy(vehicle.id);
-      await this.spotRepo.save(allocatedSpot);
 
       // Update vehicle entry time
       vehicle.entryTime = new Date();
@@ -201,14 +250,19 @@ export class ParkingLotService {
 
       // Calculate fee using Strategy pattern
       const exitTime = new Date();
-      const hours = transaction.getDurationInHours();
-      const fee = this.feeCalculator.calculateFee(vehicle.type, hours);
-
-      // Update vehicle
+      
+      // Update vehicle exit time FIRST before calculating duration
       vehicle.exitTime = exitTime;
       await this.vehicleRepo.save(vehicle);
 
-      // Complete transaction
+      // Update transaction exit time before calculating duration
+      transaction.exitTime = exitTime;
+      
+      // Now calculate duration with correct exit time
+      const hours = transaction.getDurationInHours();
+      const fee = this.feeCalculator.calculateFee(vehicle.type, hours);
+
+      // Complete transaction with calculated fee
       transaction.complete(exitTime, fee);
       await this.transactionRepo.save(transaction);
 
@@ -278,7 +332,7 @@ export class ParkingLotService {
   /**
    * Change allocation strategy
    */
-  setAllocationStrategy(implementor: any): void {
+  setAllocationStrategy(implementor: import('../patterns/bridge/ParkingOperationImplementor').ParkingOperationImplementor): void {
     this.parkingOperation.setImplementor(implementor);
   }
 }

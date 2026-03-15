@@ -12,4 +12,9 @@ export interface IParkingSpotRepository extends Omit<IRepository<ParkingSpot>, '
   findSpotsByFloor(floor: number): Promise<ParkingSpot[]> | ParkingSpot[];
   findOccupiedSpots(): Promise<ParkingSpot[]> | ParkingSpot[];
   findByVehicleId(vehicleId: string): Promise<ParkingSpot | null> | ParkingSpot | null;
+  /**
+   * Atomically reserve a spot (database-level locking)
+   * Returns null if spot is no longer available
+   */
+  reserveSpotAtomically(spotId: string, vehicleId: string): Promise<ParkingSpot | null>;
 }
